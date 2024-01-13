@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+
+	"github.com/go-chi/chi"
 )
 
 func middlewareCors(next http.Handler) http.Handler {
@@ -10,9 +12,13 @@ func middlewareCors(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Cache-control", "no-cache")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
+		}
+		if r != nil {
+			w.WriteHeader(http.StatusOK)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -43,27 +49,35 @@ func (cfg *apiConfig) metrics(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hits: " + fmt.Sprint(cfg.fileserverHits)))
 }
 
+func middlewareLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// log.Printf("%s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	port := "8080"
+
+	// filerootPath := "."
 
 	apicfg := &apiConfig{
 		fileserverHits: 0,
 	}
 
+	r := chi.NewRouter()
+
 	mux := http.NewServeMux()
 
-	fs := http.FileServer(http.Dir("."))
+	fsHandler := http.FileServer(http.Dir("."))
+	spHandler := http.StripPrefix("/app", fsHandler)
 
-	sp := http.StripPrefix("/app", fs)
-
-	mux.Handle("/app/", apicfg.middlewareMetricsInc(sp))
-
-	mux.HandleFunc("/healthz", healthz)
-
+	r.Handle("/app/", apicfg.middlewareMetricsInc(spHandler))
+	r.Get("/healthz", healthz)
 	mux.HandleFunc("/reset", apicfg.reset)
 	mux.HandleFunc("/metrics", apicfg.metrics)
 
-	corsMux := middlewareCors(mux)
+	corsMux := middlewareCors(r)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
